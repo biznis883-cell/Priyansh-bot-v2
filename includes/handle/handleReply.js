@@ -1,64 +1,57 @@
 module.exports = function ({ api, models, Users, Threads, Currencies }) {
+    const logger = require("../../utils/log.js");
+
     return async function ({ event }) {
-        if (!event.messageReply) return;
-
-        const { handleReply = [], commands } = global.client || {};
-        const { messageID, threadID, messageReply } = event;
-
-        if (!commands || !messageReply || handleReply.length === 0) return;
-
-        const indexOfHandle = handleReply.findIndex(
-            e => e.messageID == messageReply.messageID
-        );
-
-        if (indexOfHandle < 0) return;
-
-        const indexOfMessage = handleReply[indexOfHandle];
-        const handleNeedExec = commands.get(indexOfMessage.name);
-
-        if (!handleNeedExec) {
-            return api.sendMessage(
-                global.getText('handleReply', 'missingValue'),
-                threadID,
-                messageID
-            );
-        }
-
         try {
-            let getText2;
+            if (!event || !event.messageReply) return;
+
+            const { handleReply, commands } = global.client;
+
+            if (!Array.isArray(handleReply) || handleReply.length === 0) {
+                return;
+            }
+
+            const senderID = String(event.senderID || "");
+            const threadID = String(event.threadID || "");
+
+            if (senderID === String(api.getCurrentUserID())) return;
+
+            const replyMessageID = event.messageReply.messageID;
+
+            const index = handleReply.findIndex(
+                item => item.messageID === replyMessageID
+            );
+
+            if (index === -1) return;
+
+            const replyData = handleReply[index];
+
+            const command = commands.get(replyData.name);
+
+            if (!command || typeof command.handleReply !== "function") {
+                return;
+            }
+
+            let getText = () => "";
 
             if (
-                handleNeedExec.languages &&
-                typeof handleNeedExec.languages === 'object'
+                command.languages &&
+                typeof command.languages === "object" &&
+                command.languages[global.config.language]
             ) {
-                getText2 = (...value) => {
-                    const languages = handleNeedExec.languages;
-                    const language = global.config?.language;
+                getText = (...values) => {
+                    let text =
+                        command.languages[global.config.language][values[0]] || "";
 
-                    if (!languages[language]) {
-                        return api.sendMessage(
-                            global.getText(
-                                'handleCommand',
-                                'notFoundLanguage',
-                                handleNeedExec.config.name
-                            ),
-                            threadID,
-                            messageID
+                    for (let i = 1; i < values.length; i++) {
+                        text = text.replace(
+                            new RegExp("%" + i, "g"),
+                            String(values[i])
                         );
                     }
 
-                    let lang =
-                        languages[language][value[0]] || '';
-
-                    for (let i = value.length; i > 0; i--) {
-                        const expReg = new RegExp('%' + i, 'g');
-                        lang = lang.replace(expReg, value[i]);
-                    }
-
-                    return lang;
+                    return text;
                 };
-            } else {
-                getText2 = () => {};
             }
 
             const Obj = {
@@ -68,23 +61,16 @@ module.exports = function ({ api, models, Users, Threads, Currencies }) {
                 Users,
                 Threads,
                 Currencies,
-                handleReply: indexOfMessage,
-                getText: getText2
+                handleReply: replyData,
+                getText
             };
 
-            await handleNeedExec.handleReply(Obj);
+            await Promise.resolve(command.handleReply(Obj));
 
         } catch (error) {
-            console.error('handleReply error:', error);
-
-            return api.sendMessage(
-                global.getText(
-                    'handleReply',
-                    'executeError',
-                    error.message
-                ),
-                threadID,
-                messageID
+            logger(
+                `handleReply error: ${error.stack || error.message}`,
+                "error"
             );
         }
     };
